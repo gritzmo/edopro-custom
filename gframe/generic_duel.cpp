@@ -1008,7 +1008,26 @@ void GenericDuel::Sending(CoreUtils::Packet& packet, int& return_value, bool& re
 		player = BufferIO::Read<uint8_t>(pbuf);
 		count = BufferIO::Read<uint32_t>(pbuf);
 		SEND(nullptr);
-		ResendToAll();
+		if(player == 0) {
+			// Host hand: hide from opponent
+			for(auto& dueler : players.home)
+				NetServer::ReSendToPlayer(dueler);
+			for(uint32_t i = 0; i < count; ++i)
+				BufferIO::Write<uint32_t>(pbuf, 0);
+			SEND(nullptr);
+			for(auto& dueler : players.opposing)
+				NetServer::ReSendToPlayer(dueler);
+			for(auto& obs : observers)
+				NetServer::ReSendToPlayer(obs);
+		} else {
+			// Opponent hand: host can see
+			for(auto& dueler : players.opposing)
+				NetServer::ReSendToPlayer(dueler);
+			for(auto& dueler : players.home)
+				NetServer::ReSendToPlayer(dueler);
+			for(auto& obs : observers)
+				NetServer::ReSendToPlayer(obs);
+		}
 		packets_cache.push_back(packet);
 		break;
 	}
@@ -1021,6 +1040,9 @@ void GenericDuel::Sending(CoreUtils::Packet& packet, int& return_value, bool& re
 		SEND(nullptr);
 		for(auto& dueler : (player == 0) ? players.home : players.opposing)
 			NetServer::ReSendToPlayer(dueler);
+		// Host cards moving to hand/deck/facedown: hide from opponent
+		if(player == 0 && !(current.location & (LOCATION_GRAVE + LOCATION_OVERLAY)) && ((current.location & (LOCATION_DECK + LOCATION_HAND)) || (current.position & POS_FACEDOWN)))
+			BufferIO::Write<uint32_t>(pbufw, 0);
 		SEND(nullptr);
 		for(auto& dueler : (player == 1) ? players.home : players.opposing)
 			NetServer::ReSendToPlayer(dueler);
@@ -1064,6 +1086,18 @@ void GenericDuel::Sending(CoreUtils::Packet& packet, int& return_value, bool& re
 		SEND(nullptr);
 		for(auto& dueler : (player == 0) ? players.home : players.opposing)
 			NetServer::ReSendToPlayer(dueler);
+		// Host draws: hide from opponent
+		if(player == 0) {
+			for(uint32_t i = 0; i < count; ++i) {
+				/*uint32_t code = */BufferIO::Read<uint32_t>(pbufw);
+				uint32_t pos = BufferIO::Read<uint32_t>(pbufw);
+				if(!(pos & POS_FACEUP)) {
+					pbufw -= 8;
+					BufferIO::Write<uint32_t>(pbufw, 0);
+					pbufw += 4;
+				}
+			}
+		}
 		SEND(nullptr);
 		for(auto& dueler : (player == 1) ? players.home : players.opposing)
 			NetServer::ReSendToPlayer(dueler);
@@ -1367,7 +1401,10 @@ void GenericDuel::RefreshLocation(uint8_t player, uint32_t flag, uint8_t locatio
 	for(auto& dueler : (player == 0) ? players.home : players.opposing)
 		NetServer::ReSendToPlayer(dueler);
 	buffer.resize(3);
-	query.GenerateBuffer(buffer, false);
+	if(player == 0)
+		query.GeneratePublicBuffer(buffer);
+	else
+		query.GenerateBuffer(buffer, false);
 	NetServer::SendBufferToPlayer(nullptr, STOC_GAME_MSG, buffer);
 	for(auto& dueler : (player == 1) ? players.home : players.opposing)
 		NetServer::ReSendToPlayer(dueler);
